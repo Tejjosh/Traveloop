@@ -29,8 +29,8 @@
 
 ### Backend
 - **Framework:** Python / Flask
-- **Database:** SQLite (Development) / Relational Database
-- **ORM:** Flask-SQLAlchemy
+- **Database Server:** XAMPP (MySQL / MariaDB)
+- **ORM:** Flask-SQLAlchemy (with PyMySQL)
 - **Authentication:** Flask-JWT-Extended, Werkzeug Security
 - **Cross-Origin:** Flask-CORS
 
@@ -42,13 +42,25 @@
 Make sure you have the following installed on your local machine:
 - [Node.js](https://nodejs.org/) (v16 or higher)
 - [Python](https://www.python.org/) (v3.8 or higher)
+- [XAMPP](https://www.apachefriends.org/index.html) (For the MySQL Database)
 - [Git](https://git-scm.com/)
 
 ### 1. Clone the Repository
 ```bash
 git clone [https://github.com/YOUR_USERNAME/traveloop.git](https://github.com/YOUR_USERNAME/traveloop.git)
 cd traveloop
-2. Backend Setup
+2. Database Setup (XAMPP)
+Before running the backend, you must initialize the database server.
+
+Open the XAMPP Control Panel.
+
+Start the Apache and MySQL modules.
+
+Open your browser and go to http://localhost/phpmyadmin.
+
+Click "New" and create a new, empty database named traveloop.
+
+3. Backend Setup
 Navigate to the backend folder, set up your virtual environment, and install the required dependencies.
 
 Bash
@@ -63,12 +75,14 @@ venv\Scripts\activate
 # On Mac/Linux:
 source venv/bin/activate
 
-# Install required Python packages
-pip install Flask Flask-CORS Flask-SQLAlchemy Flask-JWT-Extended requests werkzeug
+# Install required Python packages (including PyMySQL for XAMPP support)
+pip install Flask Flask-CORS Flask-SQLAlchemy Flask-JWT-Extended requests werkzeug pymysql python-dotenv
 Set up Backend Environment Variables:
-Create a .env file in the backend folder:
+Create a .env file in the backend folder to connect to your XAMPP server:
 
 Code snippet
+# Default XAMPP MySQL credentials (root user, empty password)
+SQLALCHEMY_DATABASE_URI=mysql+pymysql://root:@localhost/traveloop
 JWT_SECRET_KEY=super_secret_traveloop_key_that_is_long_enough_2026
 Seed the Database:
 Populate the database with 5 years of realistic travel history, mock users, activities, and expenses to immediately test the platform!
@@ -81,8 +95,8 @@ Bash
 python app.py
 The backend will now be running on http://localhost:5000
 
-3. Frontend Setup
-Open a new terminal window/tab, ensure you are in the src or root folder containing your package.json, and install the Node modules.
+4. Frontend Setup
+Open a new terminal window/tab, ensure you are in the root folder containing your package.json, and install the Node modules.
 
 Bash
 # Install frontend dependencies
