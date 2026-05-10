@@ -1,252 +1,240 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import api from '../api/axios'
+import useTripStore from '../store/tripStore' 
 
 const CURRENCIES = ['USD', 'EUR', 'GBP', 'INR', 'JPY', 'AUD', 'CAD', 'SGD']
-const TRIP_TYPES = ['Adventure', 'Cultural', 'Beach', 'Business', 'Romantic', 'Family']
-const PACE = ['Relaxed', 'Moderate', 'Fast']
-
-const STEPS = ['Trip Basics', 'Destinations', 'Budget & Prefs', 'Review']
+const TRIP_TYPES = ['Adventure', 'Wellness', 'Cultural', 'Business', 'Romantic', 'Family']
+const STEPS = ['Trip Basics', 'Destinations', 'Logistics & Budget']
 
 export default function CreateTrip() {
   const navigate = useNavigate()
-  const [step, setStep] = useState(0)
-  const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
+  const [error, setError] = useState('')
+  
+  // NEW: State for Source/Origin City
+  const [sourceCity, setSourceCity] = useState('')
+  const [stopInput, setStopInput] = useState({ city_name: '', country: '', days: 1 })
 
-  const [form, setForm] = useState({
-    title: '', description: '', start_date: '', end_date: '',
-    base_currency: 'INR', total_budget: '', is_public: false,
-    trip_type: 'Cultural', pace: 'Moderate', stops: []
-  })
-  const [stopInput, setStopInput] = useState({ city_name: '', country: '' })
+  const { 
+    tripDetails, updateTripDetail, 
+    stops, addStop, removeStop, 
+    activeStep, nextStep, prevStep, setStep,
+    resetTrip
+  } = useTripStore()
 
-  const update = (key, val) => setForm(f => ({ ...f, [key]: val }))
+  // --- HELPER: Calculate Trip Duration ---
+  const getTripDays = () => {
+    if (!tripDetails.start_date || !tripDetails.end_date) return 0;
+    const start = new Date(tripDetails.start_date);
+    const end = new Date(tripDetails.end_date);
+    if (start > end) return 0;
+    const diffTime = Math.abs(end - start);
+    return Math.ceil(diffTime / (1000 * 60 * 60 * 24)) + 1; // +1 to include both days
+  }
 
-  const addStop = () => {
+  const tripDays = getTripDays()
+
+  const handleAddStop = () => {
     if (!stopInput.city_name.trim()) return
-    update('stops', [...form.stops, { ...stopInput, id: Date.now() }])
-    setStopInput({ city_name: '', country: '' })
+    addStop(stopInput)
+    setStopInput({ city_name: '', country: '', days: 1 })
   }
-
-  const removeStop = (id) => update('stops', form.stops.filter(s => s.id !== id))
-
-  const validateStep = () => {
-    if (step === 0) {
-      if (!form.title.trim()) return 'Trip title is required'
-      if (!form.start_date) return 'Start date is required'
-      if (!form.end_date) return 'End date is required'
-      if (form.end_date < form.start_date) return 'End date must be after start date'
-    }
-    if (step === 1) {
-      if (form.stops.length === 0) return 'Add at least one destination'
-    }
-    if (step === 2) {
-      if (!form.total_budget || parseFloat(form.total_budget) <= 0)
-        return 'Enter a valid budget'
-    }
-    return null
-  }
-
-  const next = () => {
-    const err = validateStep()
-    if (err) return setError(err)
-    setError('')
-    setStep(s => s + 1)
-  }
-
-  const prev = () => { setError(''); setStep(s => s - 1) }
 
   const handleSubmit = async () => {
     setLoading(true)
+    setError('')
+
+    // --- 1. THE "CORRECTNESS" ENGINE: VALIDATION ---
+    if (!tripDetails.title?.trim()) {
+        setError("Your journey needs a name before we can proceed.")
+        setLoading(false)
+        return
+    }
+
+    if (!tripDetails.start_date || !tripDetails.end_date) {
+        setError("Please select both a Start Date and an End Date.")
+        setLoading(false)
+        return
+    }
+
+    const start = new Date(tripDetails.start_date)
+    const end = new Date(tripDetails.end_date)
+    if (start > end) {
+      setError(`Wait a second! Your return date cannot be earlier than your start date.`)
+      setLoading(false)
+      return
+    }
+
+    if (!tripDetails.trip_type) {
+        setError("Please select a Vibe & Style for your journey in Step 1.")
+        setLoading(false)
+        return
+    }
+
+    if (!sourceCity.trim()) {
+        setError("Please enter your starting location (Origin) in Step 2.")
+        setLoading(false)
+        return
+    }
+
+    if (stops.length === 0) {
+      setError("A journey of a thousand miles needs at least one stop. Please add a destination in Step 2.")
+      setLoading(false)
+      return
+    }
+
+    // --- 2. PERSISTENCE LAYER ---
     try {
       const res = await api.post('/trips/', {
-        title: form.title,
-        description: form.description,
-        start_date: form.start_date,
-        end_date: form.end_date,
-        base_currency: form.base_currency,
-        total_budget: parseFloat(form.total_budget),
-        is_public: form.is_public,
+        title: tripDetails.title,
+        description: tripDetails.description,
+        start_date: tripDetails.start_date,
+        end_date: tripDetails.end_date,
+        base_currency: tripDetails.base_currency,
+        total_budget: parseFloat(tripDetails.total_budget) || 0,
+        trip_type: tripDetails.trip_type,
+        is_public: tripDetails.is_public,
       })
+      
       const tripId = res.data.id
 
-      // Add stops
-      for (let i = 0; i < form.stops.length; i++) {
-        await api.post(`/trips/${tripId}/stops`, {
-          city_name: form.stops[i].city_name,
-          country: form.stops[i].country,
-          order_index: i
-        })
-      }
+      // Combine Source City and Destinations for sequential saving
+      const allStops = [
+        { city_name: sourceCity, country: '', order_index: 0 },
+        ...stops.map((s, idx) => ({ city_name: s.city_name, country: s.country, order_index: idx + 1 }))
+      ]
 
-      // Smart packing based on trip type
-      const packingMap = {
-        Adventure: ['Hiking Boots', 'First Aid Kit', 'Water Bottle', 'Sunscreen', 'Backpack'],
-        Beach: ['Swimsuit', 'Sunscreen', 'Flip Flops', 'Beach Towel', 'Sunglasses'],
-        Cultural: ['Comfortable Shoes', 'Camera', 'Travel Guide', 'Modest Clothing'],
-        Business: ['Laptop', 'Business Cards', 'Formal Wear', 'Charger'],
-        Romantic: ['Formal Outfit', 'Camera', 'Gift', 'Perfume'],
-        Family: ['First Aid Kit', 'Snacks', 'Kids Entertainment', 'Sunscreen'],
+      // Save all stops
+      for (let i = 0; i < allStops.length; i++) {
+        await api.post(`/trips/${tripId}/stops`, allStops[i])
       }
-      const items = packingMap[form.trip_type] || []
-      for (const item of items) {
-        await api.post(`/trips/${tripId}/packing`, { name: item, category: 'general' })
-      }
-
+      
+      resetTrip() 
       navigate(`/trips/${tripId}/itinerary`)
     } catch (err) {
-      setError(err.response?.data?.error || 'Failed to create trip')
+      setError(err.response?.data?.error || 'Failed to initialize journey. Please check your network connection.')
     } finally {
       setLoading(false)
     }
   }
 
-  const progressWidth = `${((step) / (STEPS.length - 1)) * 100}%`
-
   return (
-    <div className="min-h-screen bg-gray-50 py-10 px-4">
-      <div className="max-w-2xl mx-auto">
-
-        {/* Header */}
-        <div className="text-center mb-8">
-          <h1 className="text-3xl font-bold text-primary">🗺️ Plan a New Trip</h1>
-          <p className="text-gray-500 mt-1">Let's build your perfect itinerary step by step</p>
+    <div className="min-h-screen bg-mist flex flex-col md:flex-row">
+      
+      {/* LEFT PANEL: Wizard Controls */}
+      <div className="w-full md:w-1/2 lg:w-5/12 p-8 md:p-12 overflow-y-auto h-screen flex flex-col z-20 shadow-[10px_0_30px_rgba(0,0,0,0.05)] bg-mist">
+        
+        <div className="mb-8">
+          <h1 className="text-3xl font-bold text-pacific mb-2">Design Your Journey</h1>
+          <p className="text-terracotta font-medium">Step {activeStep + 1} of {STEPS.length}: {STEPS[activeStep]}</p>
         </div>
 
         {/* Progress Bar */}
-        <div className="mb-8">
-          <div className="flex justify-between mb-2">
-            {STEPS.map((s, i) => (
-              <div key={s} className={`text-xs font-semibold ${i <= step ? 'text-primary' : 'text-gray-400'}`}>
-                {s}
-              </div>
-            ))}
-          </div>
-          <div className="w-full bg-gray-200 rounded-full h-2">
-            <div
-              className="bg-accent h-2 rounded-full transition-all duration-500"
-              style={{ width: progressWidth }}
-            />
-          </div>
-          <div className="flex justify-between mt-1">
-            {STEPS.map((_, i) => (
-              <div key={i}
-                className={`w-4 h-4 rounded-full border-2 transition-all duration-300 ${
-                  i <= step ? 'bg-accent border-accent' : 'bg-white border-gray-300'
-                }`} />
-            ))}
-          </div>
+        <div className="w-full bg-coconut rounded-full h-2 mb-8 relative overflow-hidden">
+          <div 
+            className="bg-citrus h-full rounded-full transition-all duration-500 ease-out absolute top-0 left-0" 
+            style={{ width: `${((activeStep + 1) / STEPS.length) * 100}%` }}
+          />
         </div>
 
-        {/* Card */}
-        <div className="bg-white rounded-2xl shadow-md p-8">
-          {error && (
-            <div className="bg-red-50 border border-red-200 text-red-600 rounded-lg p-3 mb-4 text-sm">
-              {error}
-            </div>
-          )}
+        {error && (
+          <div className="bg-terracotta/10 border-l-4 border-terracotta text-pacific p-4 mb-6 rounded-r-md animate-shake">
+            <p className="font-bold text-sm uppercase mb-1">Validation Error</p>
+            {error}
+          </div>
+        )}
 
-          {/* Step 0 — Trip Basics */}
-          {step === 0 && (
-            <div className="space-y-4 animate-fade">
-              <h2 className="text-xl font-bold text-primary mb-4">✏️ Trip Basics</h2>
+        <div className="flex-grow">
+          {activeStep === 0 && (
+            <div className="space-y-6 animate-fade-in">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Trip Title *</label>
-                <input value={form.title} onChange={e => update('title', e.target.value)}
-                  placeholder="e.g. Europe Summer Adventure"
-                  className="w-full border rounded-xl px-4 py-2.5 focus:outline-none focus:ring-2 focus:ring-primary" />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Description</label>
-                <textarea value={form.description} onChange={e => update('description', e.target.value)}
-                  placeholder="What's this trip about?"
-                  className="w-full border rounded-xl px-4 py-2.5 focus:outline-none focus:ring-2 focus:ring-primary" rows={3} />
+                <label className="block text-sm font-bold text-pacific mb-2">Journey Title</label>
+                <input 
+                  value={tripDetails.title || ''} 
+                  onChange={e => updateTripDetail('title', e.target.value)}
+                  placeholder="e.g., The Kyoto Cultural Immersion"
+                  className="w-full bg-white border border-coconut rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-citrus text-pacific" 
+                />
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Start Date *</label>
-                  <input type="date" value={form.start_date} onChange={e => update('start_date', e.target.value)}
-                    className="w-full border rounded-xl px-4 py-2.5 focus:outline-none focus:ring-2 focus:ring-primary" />
+                  <label className="block text-sm font-bold text-pacific mb-2">Start Date</label>
+                  <input 
+                    type="date" 
+                    value={tripDetails.start_date || ''} 
+                    onChange={e => {
+                        updateTripDetail('start_date', e.target.value)
+                        if (tripDetails.end_date && new Date(e.target.value) > new Date(tripDetails.end_date)) {
+                            updateTripDetail('end_date', '')
+                        }
+                    }}
+                    className="w-full bg-white border border-coconut rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-citrus" 
+                  />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">End Date *</label>
-                  <input type="date" value={form.end_date} onChange={e => update('end_date', e.target.value)}
-                    className="w-full border rounded-xl px-4 py-2.5 focus:outline-none focus:ring-2 focus:ring-primary" />
+                  <label className="block text-sm font-bold text-pacific mb-2">End Date</label>
+                  <input 
+                    type="date" 
+                    value={tripDetails.end_date || ''} 
+                    min={tripDetails.start_date || undefined}
+                    onChange={e => updateTripDetail('end_date', e.target.value)}
+                    disabled={!tripDetails.start_date}
+                    className="w-full bg-white border border-coconut rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-citrus disabled:opacity-50 disabled:cursor-not-allowed" 
+                  />
                 </div>
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Trip Type</label>
+                <label className="block text-sm font-bold text-pacific mb-2">Vibe & Style</label>
                 <div className="flex flex-wrap gap-2">
                   {TRIP_TYPES.map(t => (
-                    <button key={t} type="button" onClick={() => update('trip_type', t)}
-                      className={`px-4 py-1.5 rounded-full text-sm font-medium border transition ${
-                        form.trip_type === t
-                          ? 'bg-primary text-white border-primary'
-                          : 'bg-white text-gray-600 border-gray-300 hover:border-primary'
+                    <button key={t} onClick={() => updateTripDetail('trip_type', t)}
+                      className={`px-4 py-2 rounded-full text-sm font-medium transition-all ${
+                        tripDetails.trip_type === t ? 'bg-matcha text-mist shadow-md' : 'bg-white border border-coconut text-pacific hover:border-citrus'
                       }`}>
                       {t}
                     </button>
                   ))}
                 </div>
               </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Trip Pace</label>
-                <div className="flex gap-2">
-                  {PACE.map(p => (
-                    <button key={p} type="button" onClick={() => update('pace', p)}
-                      className={`flex-1 py-2 rounded-xl text-sm font-medium border transition ${
-                        form.pace === p
-                          ? 'bg-accent text-primary border-accent'
-                          : 'bg-white text-gray-600 border-gray-300 hover:border-accent'
-                      }`}>
-                      {p === 'Relaxed' ? '🐢 Relaxed' : p === 'Moderate' ? '🚶 Moderate' : '🏃 Fast'}
-                    </button>
-                  ))}
-                </div>
-              </div>
             </div>
           )}
 
-          {/* Step 1 — Destinations */}
-          {step === 1 && (
-            <div className="space-y-4">
-              <h2 className="text-xl font-bold text-primary mb-4">📍 Add Destinations</h2>
-              <div className="flex gap-2">
-                <input value={stopInput.city_name}
-                  onChange={e => setStopInput(s => ({ ...s, city_name: e.target.value }))}
-                  placeholder="City name *"
-                  onKeyDown={e => e.key === 'Enter' && addStop()}
-                  className="flex-1 border rounded-xl px-4 py-2.5 focus:outline-none focus:ring-2 focus:ring-primary" />
-                <input value={stopInput.country}
-                  onChange={e => setStopInput(s => ({ ...s, country: e.target.value }))}
-                  placeholder="Country"
-                  className="w-32 border rounded-xl px-4 py-2.5 focus:outline-none focus:ring-2 focus:ring-primary" />
-                <button type="button" onClick={addStop}
-                  className="bg-primary text-white px-4 py-2.5 rounded-xl hover:bg-blue-900 transition font-semibold">
-                  Add
-                </button>
+          {activeStep === 1 && (
+            <div className="space-y-6 animate-fade-in">
+              {/* SOURCE SELECTION */}
+              <div className="bg-white border border-coconut p-4 rounded-2xl shadow-sm">
+                <label className="block text-sm font-bold text-pacific mb-2">Starting Location (Origin)</label>
+                <input value={sourceCity} onChange={e => setSourceCity(e.target.value)}
+                  placeholder="e.g. New York, London..." className="w-full rounded-xl px-4 py-3 focus:outline-none text-pacific bg-mist border border-transparent focus:border-citrus" />
               </div>
 
-              {form.stops.length === 0 ? (
-                <div className="text-center py-8 border-2 border-dashed border-gray-200 rounded-xl text-gray-400">
-                  <p className="text-3xl mb-2">🌍</p>
-                  <p>Add your first destination above</p>
+              {/* DESTINATION SELECTION */}
+              <div className="bg-white border border-coconut p-4 rounded-2xl shadow-sm">
+                <label className="block text-sm font-bold text-pacific mb-2">Where are you going?</label>
+                <div className="flex gap-2">
+                  <input value={stopInput.city_name} onChange={e => setStopInput(s => ({ ...s, city_name: e.target.value }))}
+                    onKeyDown={(e) => e.key === 'Enter' && handleAddStop()}
+                    placeholder="e.g. Tokyo, Paris..." className="flex-1 rounded-xl px-4 py-3 focus:outline-none text-pacific bg-mist border border-transparent focus:border-citrus" />
+                  <button onClick={handleAddStop} className="bg-citrus text-mist px-6 py-3 rounded-xl font-bold hover:shadow-lg transition-all">
+                    Add
+                  </button>
                 </div>
-              ) : (
-                <div className="space-y-2">
-                  {form.stops.map((stop, i) => (
-                    <div key={stop.id} className="flex items-center justify-between bg-blue-50 border border-blue-100 rounded-xl px-4 py-3">
-                      <div className="flex items-center gap-3">
-                        <span className="w-6 h-6 bg-primary text-white rounded-full text-xs flex items-center justify-center font-bold">
+              </div>
+
+              {stops.length > 0 && (
+                <div className="space-y-3 mt-6">
+                  {stops.map((stop, i) => (
+                    <div key={stop.id || i} className="flex items-center justify-between bg-white p-4 rounded-xl border border-coconut shadow-sm group hover:border-citrus transition-colors">
+                      <div className="flex items-center gap-4">
+                        <div className="w-8 h-8 rounded-full bg-pacific text-mist flex items-center justify-center font-bold text-sm">
                           {i + 1}
-                        </span>
-                        <div>
-                          <span className="font-semibold text-primary">{stop.city_name}</span>
-                          {stop.country && <span className="text-gray-400 text-sm ml-2">{stop.country}</span>}
                         </div>
+                        <span className="font-bold text-pacific text-lg">{stop.city_name}</span>
                       </div>
-                      <button onClick={() => removeStop(stop.id)} className="text-red-400 hover:text-red-600 text-lg">✕</button>
+                      <button onClick={() => removeStop(stop.id)} className="text-terracotta opacity-0 group-hover:opacity-100 hover:scale-110 font-bold px-2 transition-all">
+                        ✕
+                      </button>
                     </div>
                   ))}
                 </div>
@@ -254,112 +242,191 @@ export default function CreateTrip() {
             </div>
           )}
 
-          {/* Step 2 — Budget & Prefs */}
-          {step === 2 && (
-            <div className="space-y-4">
-              <h2 className="text-xl font-bold text-primary mb-4">💰 Budget & Preferences</h2>
+          {activeStep === 2 && (
+            <div className="space-y-6 animate-fade-in">
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Total Budget *</label>
-                  <input type="number" value={form.total_budget} onChange={e => update('total_budget', e.target.value)}
-                    placeholder="e.g. 50000"
-                    className="w-full border rounded-xl px-4 py-2.5 focus:outline-none focus:ring-2 focus:ring-primary" />
+                  <label className="block text-sm font-bold text-pacific mb-2">Total Budget Estimate</label>
+                  <input type="number" value={tripDetails.total_budget || ''} onChange={e => updateTripDetail('total_budget', e.target.value)}
+                    placeholder="e.g. 5000" className="w-full bg-white border border-coconut rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-citrus text-pacific" />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Currency</label>
-                  <select value={form.base_currency} onChange={e => update('base_currency', e.target.value)}
-                    className="w-full border rounded-xl px-4 py-2.5 focus:outline-none focus:ring-2 focus:ring-primary">
+                  <label className="block text-sm font-bold text-pacific mb-2">Currency</label>
+                  <select value={tripDetails.base_currency || 'USD'} onChange={e => updateTripDetail('base_currency', e.target.value)}
+                    className="w-full bg-white border border-coconut rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-citrus text-pacific">
                     {CURRENCIES.map(c => <option key={c}>{c}</option>)}
                   </select>
                 </div>
               </div>
-              <div className="flex items-center gap-3 bg-blue-50 rounded-xl p-4 border border-blue-100">
-                <input type="checkbox" id="public" checked={form.is_public}
-                  onChange={e => update('is_public', e.target.checked)}
-                  className="w-4 h-4 accent-primary" />
-                <label htmlFor="public" className="text-sm text-gray-700">
-                  <span className="font-semibold">Make this trip public</span>
-                  <span className="text-gray-400 ml-1">— visible in Community tab for others to discover</span>
+              
+              <div className="bg-white border border-coconut p-5 rounded-2xl mt-4">
+                <label className="flex items-start gap-3 cursor-pointer">
+                  <input type="checkbox" checked={tripDetails.is_public || false} onChange={e => updateTripDetail('is_public', e.target.checked)}
+                    className="w-5 h-5 accent-citrus mt-1 rounded" />
+                  <span className="text-pacific font-medium text-sm">
+                    <strong className="block text-base mb-1">Publish to Community Marketplace</strong>
+                    Allow strangers to view, clone, and get inspired by this itinerary.
+                  </span>
                 </label>
               </div>
-              <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 text-sm text-amber-800">
-                💡 <strong>Smart Packing:</strong> Based on your trip type (<strong>{form.trip_type}</strong>),
-                we'll auto-add recommended packing items when you create the trip!
-              </div>
             </div>
           )}
+        </div>
 
-          {/* Step 3 — Review */}
-          {step === 3 && (
-            <div className="space-y-4">
-              <h2 className="text-xl font-bold text-primary mb-4">✅ Review Your Trip</h2>
-              <div className="bg-gray-50 rounded-xl p-4 space-y-3">
-                <div className="flex justify-between">
-                  <span className="text-gray-500 text-sm">Title</span>
-                  <span className="font-semibold text-primary">{form.title}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-gray-500 text-sm">Dates</span>
-                  <span className="font-semibold">{form.start_date} → {form.end_date}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-gray-500 text-sm">Type & Pace</span>
-                  <span className="font-semibold">{form.trip_type} · {form.pace}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-gray-500 text-sm">Budget</span>
-                  <span className="font-semibold text-green-600">{form.base_currency} {parseFloat(form.total_budget).toLocaleString()}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-gray-500 text-sm">Visibility</span>
-                  <span className={`font-semibold ${form.is_public ? 'text-blue-600' : 'text-gray-500'}`}>
-                    {form.is_public ? '🌐 Public' : '🔒 Private'}
-                  </span>
-                </div>
-              </div>
-
-              <div>
-                <p className="text-sm font-medium text-gray-700 mb-2">📍 Destinations ({form.stops.length})</p>
-                <div className="flex flex-wrap gap-2">
-                  {form.stops.map((s, i) => (
-                    <span key={s.id} className="bg-primary text-white text-xs px-3 py-1 rounded-full">
-                      {i + 1}. {s.city_name}
-                    </span>
-                  ))}
-                </div>
-              </div>
-
-              {form.trip_type && (
-                <div className="bg-green-50 border border-green-200 rounded-xl p-3 text-sm text-green-700">
-                  🎒 Smart packing items will be auto-added for <strong>{form.trip_type}</strong> trip type
-                </div>
-              )}
-            </div>
+        {/* Navigation Footer */}
+        <div className="flex justify-between mt-8 pt-6 border-t border-coconut">
+          <button 
+            onClick={prevStep}
+            className={`font-bold py-3 px-6 rounded-xl transition-all ${activeStep === 0 ? 'opacity-0 pointer-events-none' : 'text-pacific bg-white border border-coconut hover:bg-mist'}`}
+          >
+            Back
+          </button>
+          
+          {activeStep < STEPS.length - 1 ? (
+            <button onClick={nextStep} className="bg-pacific text-mist font-bold py-3 px-8 rounded-xl hover:shadow-lg hover:-translate-y-0.5 transition-all">
+              Continue
+            </button>
+          ) : (
+            <button onClick={handleSubmit} disabled={loading} className="bg-citrus text-mist font-bold py-3 px-8 rounded-xl hover:shadow-[0_10px_20px_rgba(255,140,66,0.3)] hover:-translate-y-0.5 transition-all disabled:opacity-50">
+              {loading ? 'Initializing...' : 'Finalize Journey'}
+            </button>
           )}
-
-          {/* Navigation Buttons */}
-          <div className="flex justify-between mt-8">
-            {step > 0 ? (
-              <button onClick={prev}
-                className="px-6 py-2.5 border border-gray-300 rounded-xl text-gray-600 hover:bg-gray-50 transition font-medium">
-                ← Back
-              </button>
-            ) : <div />}
-
-            {step < STEPS.length - 1 ? (
-              <button onClick={next}
-                className="px-8 py-2.5 bg-primary text-white rounded-xl font-semibold hover:bg-blue-900 transition">
-                Next →
-              </button>
-            ) : (
-              <button onClick={handleSubmit} disabled={loading}
-                className="px-8 py-2.5 bg-accent text-primary font-bold rounded-xl hover:opacity-90 transition disabled:opacity-50">
-                {loading ? '✈️ Creating...' : '🚀 Create Trip!'}
-              </button>
-            )}
-          </div>
         </div>
       </div>
+
+      {/* RIGHT PANEL: Dynamic Live Feedback */}
+      <div className="hidden md:flex md:w-1/2 lg:w-7/12 bg-pacific relative overflow-hidden items-center justify-center p-12">
+        <div className="absolute inset-0 opacity-10 bg-[url('https://www.transparenttextures.com/patterns/cubes.png')] mix-blend-overlay"></div>
+        
+        {/* STEP 0: The Trip Dossier Preview */}
+        {activeStep === 0 && (
+            <div className="z-10 w-full max-w-md animate-fade-in-up">
+              <div className="bg-white/95 backdrop-blur-md rounded-3xl p-8 shadow-2xl border border-white/20 relative overflow-hidden">
+                <div className="absolute top-0 right-0 w-24 h-24 bg-citrus rounded-bl-full opacity-20"></div>
+                <div className="uppercase tracking-widest text-citrus text-xs font-bold mb-4">Trip Dossier</div>
+                
+                <h2 className="text-3xl font-bold text-pacific mb-8 leading-tight">
+                  {tripDetails.title || "Your Epic Journey"}
+                </h2>
+                
+                <div className="space-y-6">
+                  <div className="flex justify-between border-b border-coconut pb-4">
+                    <div>
+                      <p className="text-xs text-pacific/50 uppercase font-bold mb-1">Departure</p>
+                      <p className="text-pacific font-bold">{tripDetails.start_date || "Select Date"}</p>
+                    </div>
+                    <div className="text-right">
+                      <p className="text-xs text-pacific/50 uppercase font-bold mb-1">Return</p>
+                      <p className="text-pacific font-bold">{tripDetails.end_date || "Select Date"}</p>
+                    </div>
+                  </div>
+                  
+                  <div className="flex justify-between items-center pt-2">
+                    <div>
+                      <p className="text-xs text-pacific/50 uppercase font-bold mb-1">Vibe</p>
+                      <span className="bg-matcha/20 text-matcha px-3 py-1 rounded-full text-sm font-bold">
+                        {tripDetails.trip_type || "Any"}
+                      </span>
+                    </div>
+                    <div className="text-right">
+                      <p className="text-xs text-pacific/50 uppercase font-bold mb-1">Duration</p>
+                      <p className="text-pacific font-black text-xl">{tripDays > 0 ? `${tripDays} Days` : "-"}</p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+        )}
+        
+        {/* STEP 1: Visual Route Planner */}
+        {activeStep === 1 && (
+            <div className="z-10 w-full max-w-3xl animate-fade-in-up">
+              <div className="bg-white/10 backdrop-blur-md border border-white/20 rounded-3xl p-8 shadow-2xl">
+                <h3 className="text-mist text-xl font-bold mb-6 flex items-center gap-2">
+                  <span className="animate-pulse text-citrus">●</span> Visual Route Planner
+                </h3>
+                
+                <div className="flex items-center gap-4 overflow-x-auto pb-4 custom-scrollbar">
+                  
+                  {/* Origin Card (Text Only) */}
+                  <div className="min-w-[150px] h-32 flex flex-col justify-center items-center bg-white/20 border-2 border-dashed border-white/50 rounded-2xl text-center p-4">
+                    <span className="text-xs uppercase text-mist/70 font-bold mb-1">Origin</span>
+                    <span className="text-lg font-bold text-mist">{sourceCity || 'Choose Start'}</span>
+                  </div>
+
+                  {stops.length > 0 && <span className="text-citrus text-2xl font-black">→</span>}
+
+                  {/* Destination Cards (With Images) */}
+                  {stops.map((s, idx) => (
+                    <div key={idx} className="flex items-center gap-4">
+                      <div className="min-w-[200px] h-32 relative rounded-2xl overflow-hidden shadow-lg border-2 border-white/20 group flex-shrink-0">
+                        {/* Dynamic Destination Image using Picsum seeded by City Name */}
+                        <img 
+                          src={`https://picsum.photos/seed/${s.city_name.replace(/\s+/g, '')}/400/300`} 
+                          alt={s.city_name}
+                          className="absolute inset-0 w-full h-full object-cover group-hover:scale-110 transition-transform duration-500"
+                        />
+                        <div className="absolute inset-0 bg-gradient-to-t from-pacific/90 via-pacific/40 to-transparent"></div>
+                        <div className="absolute bottom-3 left-4 right-4">
+                          <span className="text-[10px] uppercase text-citrus font-bold bg-white/10 px-2 py-0.5 rounded backdrop-blur-sm">Stop {idx + 1}</span>
+                          <p className="text-mist font-bold text-lg leading-tight mt-1 truncate">{s.city_name}</p>
+                        </div>
+                      </div>
+                      {idx < stops.length - 1 && <span className="text-white/50 text-xl font-bold">→</span>}
+                    </div>
+                  ))}
+                </div>
+                
+                {stops.length === 0 && (
+                   <p className="text-mist/50 text-sm mt-4 italic">Add destinations to visualize your journey.</p>
+                )}
+              </div>
+            </div>
+        )}
+
+        {/* STEP 2: Functional Budget Calculator */}
+        {activeStep === 2 && (
+            <div className="z-10 w-full max-w-md animate-fade-in-up">
+              <div className="bg-white/95 backdrop-blur-md rounded-3xl p-8 shadow-2xl border border-white/20">
+                <div className="flex justify-between items-center mb-6">
+                  <h3 className="text-2xl font-bold text-pacific">Budget Tracker</h3>
+                  <span className="text-3xl">💰</span>
+                </div>
+                
+                <div className="bg-mist p-6 rounded-2xl mb-6 border border-coconut text-center">
+                  <p className="text-xs text-pacific/60 font-bold uppercase tracking-wider mb-2">Total Allocated</p>
+                  <p className="text-4xl font-black text-citrus">
+                    {tripDetails.total_budget ? `${tripDetails.total_budget}` : '0'} 
+                    <span className="text-xl ml-1 text-pacific/50">{tripDetails.base_currency || 'USD'}</span>
+                  </p>
+                </div>
+
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="bg-white border border-coconut p-4 rounded-2xl text-center shadow-sm">
+                     <p className="text-xs text-pacific/60 font-bold uppercase tracking-wider mb-2">Trip Length</p>
+                     <p className="text-xl font-bold text-pacific">{tripDays} Days</p>
+                  </div>
+                  <div className="bg-matcha/10 border border-matcha/20 p-4 rounded-2xl text-center shadow-sm">
+                     <p className="text-xs text-matcha font-bold uppercase tracking-wider mb-2">Daily Budget</p>
+                     <p className="text-xl font-bold text-matcha">
+                        {tripDetails.total_budget && tripDays > 0 
+                          ? `${(tripDetails.total_budget / tripDays).toFixed(2)}` 
+                          : '0'}
+                        <span className="text-sm ml-1">{tripDetails.base_currency || 'USD'}</span>
+                     </p>
+                  </div>
+                </div>
+
+                {(!tripDetails.total_budget || tripDetails.total_budget == 0) && (
+                   <p className="text-center text-xs text-terracotta mt-6 font-medium bg-terracotta/10 py-2 rounded-lg">
+                      Enter a budget on the left to calculate daily estimates.
+                   </p>
+                )}
+              </div>
+            </div>
+        )}
+      </div>
+
     </div>
   )
 }

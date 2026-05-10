@@ -2,7 +2,23 @@
 @tailwind components;
 @tailwind utilities;
 
-body {
-  background-color: #f8fafc;
-  font-family: 'Segoe UI', sans-serif;
+@layer base {
+  body {
+    /* Using the 'mist' color from our new Tailwind config */
+    @apply bg-mist text-pacific font-sans antialiased selection:bg-apricot selection:text-pacific;
+  }
+}
+
+/* Custom Scrollbar for the left panel wizard */
+::-webkit-scrollbar {
+  width: 8px;
+}
+::-webkit-scrollbar-track {
+  @apply bg-mist;
+}
+::-webkit-scrollbar-thumb {
+  @apply bg-coconut rounded-full;
+}
+::-webkit-scrollbar-thumb:hover {
+  @apply bg-apricot;
 }

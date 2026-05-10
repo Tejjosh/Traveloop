@@ -1,72 +1,80 @@
-import { useEffect, useState } from 'react'
-import { useParams } from 'react-router-dom'
+import { useState, useEffect } from 'react'
+import { useParams, Link } from 'react-router-dom'
 import api from '../api/axios'
-
-const CATEGORIES = ['clothing', 'documents', 'electronics', 'general']
 
 export default function PackingList() {
   const { id } = useParams()
   const [items, setItems] = useState([])
-  const [form, setForm] = useState({ name: '', category: 'general' })
-  const [error, setError] = useState('')
+  const [newItem, setNewItem] = useState('')
+  const [tripInfo, setTripInfo] = useState(null)
 
-  const fetchItems = () => api.get(`/trips/${id}/packing`).then(res => setItems(res.data))
-  useEffect(() => { fetchItems() }, [id])
+  useEffect(() => {
+    // Simulated fetch for packing list and trip context
+    api.get(`/trips/${id}`).then(res => {
+      setTripInfo(res.data)
+      // Simulate backend returning smart suggestions based on trip_type
+      generateSmartSuggestions(res.data.trip_type)
+    })
+  }, [id])
 
-  const addItem = async (e) => {
+  const generateSmartSuggestions = (type) => {
+    const baseItems = [
+      { id: 1, name: 'Passport & ID', is_packed: false, category: 'documents' },
+      { id: 2, name: 'Phone Charger & Adapter', is_packed: false, category: 'electronics' }
+    ]
+    if (type === 'Adventure') baseItems.push({ id: 3, name: 'Hiking Boots', is_packed: false, category: 'clothing' })
+    if (type === 'Cultural') baseItems.push({ id: 4, name: 'Modest Temple Clothing', is_packed: false, category: 'clothing' })
+    setItems(baseItems)
+  }
+
+  const handleAddItem = (e) => {
     e.preventDefault()
-    if (!form.name.trim()) return setError('Item name is required')
-    setError('')
-    await api.post(`/trips/${id}/packing`, form)
-    setForm({ name: '', category: 'general' })
-    fetchItems()
+    if (!newItem.trim()) return
+    setItems([...items, { id: Date.now(), name: newItem, is_packed: false, category: 'misc' }])
+    setNewItem('')
   }
 
-  const toggleItem = async (itemId) => {
-    await api.patch(`/trips/packing/${itemId}/toggle`)
-    fetchItems()
+  const togglePacked = (itemId) => {
+    setItems(items.map(i => i.id === itemId ? { ...i, is_packed: !i.is_packed } : i))
   }
-
-  const packed = items.filter(i => i.is_packed).length
 
   return (
-    <div className="max-w-2xl mx-auto px-6 py-8">
-      <h2 className="text-2xl font-bold text-primary mb-2">🎒 Packing Checklist</h2>
-      <p className="text-gray-500 mb-6">{packed} of {items.length} items packed</p>
+    <div className="min-h-screen bg-mist py-10 px-6 md:px-12">
+      <div className="max-w-3xl mx-auto">
+        <Link to={`/trips/${id}/itinerary`} className="text-sm font-bold text-pacific/50 hover:text-citrus mb-6 inline-block">← Back to Itinerary</Link>
+        
+        <div className="bg-pacific text-mist rounded-3xl p-8 mb-8 relative overflow-hidden shadow-lg border border-pacific/80">
+          <div className="absolute top-0 right-0 w-32 h-32 bg-citrus rounded-full blur-3xl opacity-20"></div>
+          <h1 className="text-3xl font-bold mb-2">Smart Packing Algorithm</h1>
+          <p className="text-apricot font-medium text-sm">Suggestions tailored for your {tripInfo?.trip_type} journey to {tripInfo?.stops?.[0]?.city_name || 'your destination'}.</p>
+        </div>
 
-      <div className="bg-white rounded-xl shadow p-5 mb-6">
-        {error && <p className="text-red-500 text-sm mb-2">{error}</p>}
-        <form onSubmit={addItem} className="flex gap-2">
-          <input value={form.name} onChange={e => setForm({ ...form, name: e.target.value })}
-            placeholder="Add item..." className="flex-1 border rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-primary" />
-          <select value={form.category} onChange={e => setForm({ ...form, category: e.target.value })}
-            className="border rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-primary">
-            {CATEGORIES.map(c => <option key={c}>{c}</option>)}
-          </select>
-          <button type="submit" className="bg-primary text-white px-4 py-2 rounded-lg hover:bg-blue-900">Add</button>
+        <form onSubmit={handleAddItem} className="flex gap-2 mb-8 bg-white p-2 rounded-2xl border border-coconut shadow-sm">
+          <input 
+            type="text" value={newItem} onChange={e => setNewItem(e.target.value)}
+            placeholder="Add a specific item..." 
+            className="flex-1 bg-transparent px-4 focus:outline-none text-pacific font-medium"
+          />
+          <button type="submit" className="bg-citrus text-mist font-bold px-6 py-3 rounded-xl hover:bg-terracotta transition-colors">Add</button>
         </form>
-      </div>
 
-      {CATEGORIES.map(cat => {
-        const catItems = items.filter(i => i.category === cat)
-        if (catItems.length === 0) return null
-        return (
-          <div key={cat} className="bg-white rounded-xl shadow p-5 mb-4">
-            <h3 className="font-bold text-primary capitalize mb-3">{cat}</h3>
-            <div className="space-y-2">
-              {catItems.map(item => (
-                <div key={item.id} onClick={() => toggleItem(item.id)}
-                  className={`flex items-center gap-3 p-2 rounded-lg cursor-pointer hover:bg-gray-50 transition ${item.is_packed ? 'opacity-60' : ''}`}>
-                  <div className={`w-5 h-5 rounded border-2 flex items-center justify-center ${item.is_packed ? 'bg-green-500 border-green-500' : 'border-gray-300'}`}>
-                    {item.is_packed && <span className="text-white text-xs">✓</span>}
-                  </div>
-                  <span className={item.is_packed ? 'line-through text-gray-400' : 'text-gray-700'}>{item.name}</span>
-                </div>
-              ))}
-            </div>
+        <div className="bg-white rounded-3xl p-8 border border-coconut shadow-sm">
+          <div className="space-y-3">
+            {items.map(item => (
+              <div key={item.id} className="flex items-center gap-4 p-3 hover:bg-mist/50 rounded-xl transition-colors group">
+                <input 
+                  type="checkbox" checked={item.is_packed} onChange={() => togglePacked(item.id)}
+                  className="w-5 h-5 accent-citrus cursor-pointer"
+                />
+                <span className={`font-medium flex-1 cursor-pointer ${item.is_packed ? 'text-pacific/30 line-through' : 'text-pacific'}`} onClick={() => togglePacked(item.id)}>
+                  {item.name}
+                </span>
+                <span className="text-xs font-bold text-pacific/40 uppercase bg-coconut/50 px-2 py-1 rounded">{item.category}</span>
+              </div>
+            ))}
           </div>
-        )
-      })}
+        </div>
+      </div>
     </div>
   )
 }

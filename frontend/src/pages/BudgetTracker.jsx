@@ -1,146 +1,116 @@
-import { useEffect, useState } from 'react'
-import { useParams } from 'react-router-dom'
-import { PieChart, Pie, Cell, Tooltip, Legend, ResponsiveContainer } from 'recharts'
+import { useState, useEffect } from 'react'
+import { useParams, Link } from 'react-router-dom'
 import api from '../api/axios'
-
-const CURRENCIES = ['USD', 'EUR', 'GBP', 'INR', 'JPY', 'AUD', 'CAD', 'SGD']
-const COLORS = { transport: '#3B82F6', stay: '#10B981', food: '#F59E0B', activity: '#8B5CF6' }
-const CATEGORIES = ['transport', 'stay', 'food', 'activity']
 
 export default function BudgetTracker() {
   const { id } = useParams()
   const [trip, setTrip] = useState(null)
-  const [expenses, setExpenses] = useState([])
-  const [form, setForm] = useState({ category: 'food', description: '', amount: '', currency: 'USD', date: '' })
-  const [error, setError] = useState('')
+  const [loading, setLoading] = useState(true)
+  const [expenseForm, setExpenseForm] = useState({ category: 'food', description: '', amount: '', currency: 'USD' })
 
-  const fetchData = async () => {
-    const [tripRes, expRes] = await Promise.all([api.get(`/trips/${id}`), api.get(`/trips/${id}/expenses`)])
-    setTrip(tripRes.data)
-    setExpenses(expRes.data)
+  useEffect(() => {
+    fetchTrip()
+  }, [id])
+
+  const fetchTrip = async () => {
+    try {
+      const res = await api.get(`/trips/${id}`)
+      setTrip(res.data)
+      setExpenseForm(prev => ({ ...prev, currency: res.data.base_currency }))
+    } catch (err) {
+      console.error(err)
+    } finally {
+      setLoading(false)
+    }
   }
-  useEffect(() => { fetchData() }, [id])
 
-  const addExpense = async (e) => {
+  const handleAddExpense = async (e) => {
     e.preventDefault()
-    if (!form.amount || parseFloat(form.amount) <= 0) return setError('Enter a valid amount')
-    if (!form.date) return setError('Date is required')
-    setError('')
-    await api.post(`/trips/${id}/expenses`, form)
-    setForm({ category: 'food', description: '', amount: '', currency: 'USD', date: '' })
-    fetchData()
+    try {
+      await api.post(`/trips/${id}/expenses`, { ...expenseForm, amount: parseFloat(expenseForm.amount) })
+      setExpenseForm({ category: 'food', description: '', amount: '', currency: trip.base_currency })
+      fetchTrip() // Refresh totals
+    } catch (err) {
+      alert("Failed to add expense")
+    }
   }
 
-  const deleteExpense = async (expId) => {
-    await api.delete(`/trips/expenses/${expId}`)
-    fetchData()
-  }
+  if (loading) return <div className="min-h-screen bg-mist flex items-center justify-center"><div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-pacific"></div></div>
 
-  if (!trip) return <div className="text-center py-16 text-gray-400">Loading...</div>
-
-  const { budget_summary: bs } = trip
-  const pieData = Object.entries(bs.breakdown)
-    .filter(([, v]) => v > 0)
-    .map(([k, v]) => ({ name: k, value: v }))
-  const overBudget = bs.remaining < 0
+  const summary = trip?.budget_summary
+  const percentSpent = Math.min((summary?.total_spent / summary?.total_budget) * 100, 100) || 0
 
   return (
-    <div className="max-w-4xl mx-auto px-6 py-8">
-      <h2 className="text-2xl font-bold text-primary mb-2">💰 Budget Tracker</h2>
-      <p className="text-gray-500 mb-6">{trip.title} · Base currency: <strong>{trip.base_currency}</strong></p>
+    <div className="min-h-screen bg-mist py-10 px-6 md:px-12">
+      <div className="max-w-4xl mx-auto">
+        <Link to={`/trips/${id}/itinerary`} className="text-sm font-bold text-pacific/50 hover:text-citrus mb-6 inline-block">← Back to Itinerary</Link>
+        <h1 className="text-3xl font-bold text-pacific mb-8">Budget Dashboard</h1>
 
-      {/* Summary Cards */}
-      <div className="grid grid-cols-3 gap-4 mb-6">
-        <div className="bg-white rounded-xl shadow p-4 text-center">
-          <p className="text-sm text-gray-500">Total Budget</p>
-          <p className="text-2xl font-bold text-primary">{trip.base_currency} {bs.total_budget.toLocaleString()}</p>
-        </div>
-        <div className="bg-white rounded-xl shadow p-4 text-center">
-          <p className="text-sm text-gray-500">Total Spent</p>
-          <p className="text-2xl font-bold text-orange-500">{trip.base_currency} {bs.total_spent.toLocaleString()}</p>
-        </div>
-        <div className={`rounded-xl shadow p-4 text-center ${overBudget ? 'bg-red-50' : 'bg-green-50'}`}>
-          <p className="text-sm text-gray-500">Remaining</p>
-          <p className={`text-2xl font-bold ${overBudget ? 'text-red-600' : 'text-green-600'}`}>
-            {trip.base_currency} {Math.abs(bs.remaining).toLocaleString()} {overBudget ? '⚠️ Over!' : '✅'}
-          </p>
-        </div>
-      </div>
-
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
-        {/* Pie Chart */}
-        {pieData.length > 0 && (
-          <div className="bg-white rounded-xl shadow p-5">
-            <h3 className="font-bold text-primary mb-3">Spending Breakdown</h3>
-            <ResponsiveContainer width="100%" height={220}>
-              <PieChart>
-                <Pie data={pieData} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={80} label>
-                  {pieData.map((entry) => (
-                    <Cell key={entry.name} fill={COLORS[entry.name] || '#94A3B8'} />
-                  ))}
-                </Pie>
-                <Tooltip formatter={(v) => `${trip.base_currency} ${v.toFixed(2)}`} />
-                <Legend />
-              </PieChart>
-            </ResponsiveContainer>
-          </div>
-        )}
-
-        {/* Add Expense Form */}
-        <div className="bg-white rounded-xl shadow p-5">
-          <h3 className="font-bold text-primary mb-3">+ Add Expense</h3>
-          {error && <p className="text-red-500 text-sm mb-2">{error}</p>}
-          <form onSubmit={addExpense} className="space-y-3">
-            <select value={form.category} onChange={e => setForm({ ...form, category: e.target.value })}
-              className="w-full border rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-primary">
-              {CATEGORIES.map(c => <option key={c} value={c}>{c.charAt(0).toUpperCase() + c.slice(1)}</option>)}
-            </select>
-            <input value={form.description} onChange={e => setForm({ ...form, description: e.target.value })}
-              placeholder="Description (optional)"
-              className="w-full border rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-primary" />
-            <div className="grid grid-cols-2 gap-2">
-              <input type="number" value={form.amount} onChange={e => setForm({ ...form, amount: e.target.value })}
-                placeholder="Amount *"
-                className="border rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-primary" />
-              <select value={form.currency} onChange={e => setForm({ ...form, currency: e.target.value })}
-                className="border rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-primary">
-                {CURRENCIES.map(c => <option key={c}>{c}</option>)}
-              </select>
+        {/* Top Analytics Card */}
+        <div className="bg-white rounded-3xl p-8 border border-coconut shadow-sm mb-8">
+          <div className="flex justify-between items-end mb-4">
+            <div>
+              <p className="text-sm font-bold text-pacific/50 uppercase">Total Budget</p>
+              <h2 className="text-3xl font-bold text-pacific">{trip?.base_currency} {summary?.total_budget.toLocaleString()}</h2>
             </div>
-            <input type="date" value={form.date} onChange={e => setForm({ ...form, date: e.target.value })}
-              className="w-full border rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-primary" />
-            <button type="submit" className="w-full bg-accent text-primary font-bold py-2 rounded-lg hover:opacity-90">
-              Add Expense (auto-converts to {trip.base_currency})
-            </button>
-          </form>
+            <div className="text-right">
+              <p className="text-sm font-bold text-pacific/50 uppercase">Remaining</p>
+              <h2 className={`text-3xl font-bold ${summary?.remaining < 0 ? 'text-terracotta' : 'text-matcha'}`}>
+                {trip?.base_currency} {summary?.remaining.toLocaleString()}
+              </h2>
+            </div>
+          </div>
+          
+          <div className="w-full bg-coconut rounded-full h-4 mb-2 overflow-hidden">
+            <div 
+              className={`h-4 rounded-full transition-all duration-1000 ${percentSpent > 90 ? 'bg-terracotta' : percentSpent > 70 ? 'bg-citrus' : 'bg-matcha'}`}
+              style={{ width: `${percentSpent}%` }}
+            ></div>
+          </div>
+          <p className="text-xs text-pacific/60 font-bold text-right">{percentSpent.toFixed(1)}% spent</p>
         </div>
-      </div>
 
-      {/* Expense List */}
-      <div className="bg-white rounded-xl shadow p-5">
-        <h3 className="font-bold text-primary mb-3">All Expenses</h3>
-        {expenses.length === 0 ? (
-          <p className="text-gray-400 text-center py-4">No expenses logged yet.</p>
-        ) : (
-          <div className="space-y-2">
-            {expenses.map(e => (
-              <div key={e.id} className="flex justify-between items-center bg-gray-50 rounded-lg px-4 py-2">
-                <div>
-                  <span className="inline-block text-xs px-2 py-0.5 rounded-full mr-2 font-semibold"
-                    style={{ background: COLORS[e.category] + '22', color: COLORS[e.category] }}>
-                    {e.category}
-                  </span>
-                  <span className="text-sm text-gray-700">{e.description || '—'}</span>
-                  <span className="text-xs text-gray-400 ml-2">{e.date}</span>
+        {/* Split Section: Form & Breakdown */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+          
+          <div className="bg-white rounded-3xl p-8 border border-coconut shadow-sm">
+            <h3 className="text-xl font-bold text-pacific mb-4">Add Expense</h3>
+            <form onSubmit={handleAddExpense} className="space-y-4">
+              <div>
+                <label className="block text-xs font-bold text-pacific/60 mb-1">Description</label>
+                <input type="text" required value={expenseForm.description} onChange={e => setExpenseForm({...expenseForm, description: e.target.value})} className="w-full bg-mist border border-coconut rounded-xl px-4 py-2 focus:outline-none focus:border-citrus text-pacific" placeholder="e.g. Sushi Dinner" />
+              </div>
+              <div className="flex gap-4">
+                <div className="flex-1">
+                  <label className="block text-xs font-bold text-pacific/60 mb-1">Amount</label>
+                  <input type="number" required value={expenseForm.amount} onChange={e => setExpenseForm({...expenseForm, amount: e.target.value})} className="w-full bg-mist border border-coconut rounded-xl px-4 py-2 focus:outline-none focus:border-citrus text-pacific" />
                 </div>
-                <div className="flex items-center gap-3">
-                  <span className="font-semibold text-primary">{e.currency} {e.amount}</span>
-                  <button onClick={() => deleteExpense(e.id)} className="text-red-400 hover:text-red-600 text-xs">✕</button>
+                <div className="flex-1">
+                  <label className="block text-xs font-bold text-pacific/60 mb-1">Category</label>
+                  <select value={expenseForm.category} onChange={e => setExpenseForm({...expenseForm, category: e.target.value})} className="w-full bg-mist border border-coconut rounded-xl px-4 py-2 focus:outline-none focus:border-citrus text-pacific">
+                    <option value="food">Food</option>
+                    <option value="transport">Transport</option>
+                    <option value="stay">Stay</option>
+                    <option value="activity">Activity</option>
+                  </select>
                 </div>
               </div>
-            ))}
+              <button type="submit" className="w-full bg-pacific text-mist font-bold py-3 rounded-xl hover:bg-pacific/90 transition-colors">Log Expense</button>
+            </form>
           </div>
-        )}
+
+          <div className="bg-white rounded-3xl p-8 border border-coconut shadow-sm">
+            <h3 className="text-xl font-bold text-pacific mb-4">Category Breakdown</h3>
+            <div className="space-y-4">
+              {['stay', 'transport', 'food', 'activity'].map(cat => (
+                <div key={cat} className="flex justify-between items-center border-b border-coconut pb-2">
+                  <span className="capitalize font-bold text-pacific/80">{cat}</span>
+                  <span className="font-bold text-pacific">{trip?.base_currency} {summary?.breakdown[cat]?.toLocaleString()}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
       </div>
     </div>
   )

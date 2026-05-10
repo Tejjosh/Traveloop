@@ -1,48 +1,54 @@
-import { useEffect, useState } from 'react'
-import { useParams } from 'react-router-dom'
+import { useState, useEffect } from 'react'
+import { useParams, Link } from 'react-router-dom'
 import api from '../api/axios'
 
 export default function TripNotes() {
   const { id } = useParams()
   const [notes, setNotes] = useState([])
-  const [content, setContent] = useState('')
-  const [error, setError] = useState('')
+  const [newNote, setNewNote] = useState('')
 
-  const fetchNotes = () => api.get(`/trips/${id}/notes`).then(res => setNotes(res.data))
-  useEffect(() => { fetchNotes() }, [id])
+  useEffect(() => {
+    // Simulated fetch
+    setNotes([
+      { id: 1, content: 'Flight confirmation code is X8Y9Z.', created_at: new Date().toISOString() },
+      { id: 2, content: 'Remember to ask the guide about the hidden ramen shop.', created_at: new Date().toISOString() }
+    ])
+  }, [id])
 
-  const addNote = async (e) => {
+  const handleAddNote = (e) => {
     e.preventDefault()
-    if (!content.trim()) return setError('Note cannot be empty')
-    setError('')
-    await api.post(`/trips/${id}/notes`, { content })
-    setContent('')
-    fetchNotes()
+    if (!newNote.trim()) return
+    setNotes([{ id: Date.now(), content: newNote, created_at: new Date().toISOString() }, ...notes])
+    setNewNote('')
   }
 
   return (
-    <div className="max-w-2xl mx-auto px-6 py-8">
-      <h2 className="text-2xl font-bold text-primary mb-6">📝 Trip Notes</h2>
-      <div className="bg-white rounded-xl shadow p-5 mb-6">
-        {error && <p className="text-red-500 text-sm mb-2">{error}</p>}
-        <form onSubmit={addNote} className="space-y-3">
-          <textarea value={content} onChange={e => setContent(e.target.value)}
-            placeholder="Write a note, reminder, or important detail..."
-            className="w-full border rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-primary" rows={4} />
-          <button type="submit" className="w-full bg-primary text-white py-2 rounded-lg font-semibold hover:bg-blue-900">
-            Save Note
-          </button>
-        </form>
-      </div>
-      <div className="space-y-3">
-        {notes.length === 0 ? (
-          <p className="text-center text-gray-400 py-8">No notes yet. Add your first note above!</p>
-        ) : notes.map(note => (
-          <div key={note.id} className="bg-white rounded-xl shadow p-4 border-l-4 border-accent">
-            <p className="text-gray-700 whitespace-pre-wrap">{note.content}</p>
-            <p className="text-xs text-gray-400 mt-2">{new Date(note.created_at).toLocaleString()}</p>
+    <div className="min-h-screen bg-mist py-10 px-6 md:px-12">
+      <div className="max-w-3xl mx-auto">
+        <Link to={`/trips/${id}/itinerary`} className="text-sm font-bold text-pacific/50 hover:text-citrus mb-6 inline-block">← Back to Itinerary</Link>
+        <h1 className="text-3xl font-bold text-pacific mb-8">Travel Journal & Notes</h1>
+
+        <form onSubmit={handleAddNote} className="mb-8">
+          <textarea 
+            value={newNote} onChange={e => setNewNote(e.target.value)} rows="4"
+            placeholder="Jot down a quick thought, confirmation number, or reminder..."
+            className="w-full bg-white border border-coconut rounded-2xl p-4 focus:outline-none focus:border-citrus text-pacific shadow-sm mb-2"
+          />
+          <div className="flex justify-end">
+            <button type="submit" className="bg-pacific text-mist font-bold px-6 py-2 rounded-xl hover:bg-pacific/90 transition-colors shadow-sm">Save Note</button>
           </div>
-        ))}
+        </form>
+
+        <div className="space-y-4">
+          {notes.map(note => (
+            <div key={note.id} className="bg-white rounded-2xl p-6 border border-coconut shadow-sm hover:shadow-md transition-shadow relative">
+              <span className="absolute top-6 right-6 text-2xl text-coconut">”</span>
+              <p className="text-pacific/80 whitespace-pre-wrap relative z-10 font-medium">{note.content}</p>
+              <p className="text-xs text-pacific/40 font-bold mt-4 uppercase tracking-wider">{new Date(note.created_at).toLocaleDateString()}</p>
+            </div>
+          ))}
+          {notes.length === 0 && <p className="text-center text-pacific/50 mt-10">Your journal is empty.</p>}
+        </div>
       </div>
     </div>
   )
